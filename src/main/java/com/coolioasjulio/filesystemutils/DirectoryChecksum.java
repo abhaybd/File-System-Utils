@@ -13,18 +13,43 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.RecursiveAction;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 public class DirectoryChecksum {
-    private static final int DEFAULT_BUFFER_SIZE = 1024;
+    private static final int DEFAULT_BUFFER_SIZE = 8192;
 
     public static void main(String[] args) {
+        int numIterations = 10;
         DirectoryChecksum directoryChecksum = new DirectoryChecksum("test_resources", HashAlgorithm.MD5);
         System.out.println("Starting...");
+
+        benchmarkSingleThreaded(directoryChecksum, numIterations);
+        benchmarkMultiThreaded(directoryChecksum, numIterations);
+    }
+
+    private static void benchmarkSingleThreaded(DirectoryChecksum directoryChecksum, int numIterations) {
+        double[] times = IntStream.range(0,numIterations)
+                .mapToDouble(e -> calculateChecksums(directoryChecksum, new ForkJoinPool(1))).toArray();
+        double averageTime = Arrays.stream(times).average().orElse(0.0);
+        double standardDeviation = Math.sqrt(Arrays.stream(times).map(e -> Math.pow(averageTime-e,2)).average().orElse(0.0));
+        System.out.printf("Single threaded performance on %d iterations: %.0fms +- %.3fms std. dev\n",
+                numIterations, averageTime, standardDeviation);
+    }
+
+    private static void benchmarkMultiThreaded(DirectoryChecksum directoryChecksum, int numIterations) {
+        ForkJoinPool pool = ForkJoinPool.commonPool();
+        double[] times = IntStream.range(0,numIterations)
+                .mapToDouble(e -> calculateChecksums(directoryChecksum, pool)).toArray();
+        double averageTime = Arrays.stream(times).average().orElse(0.0);
+        double standardDeviation = Math.sqrt(Arrays.stream(times).map(e -> Math.pow(averageTime-e,2)).average().orElse(0.0));
+        System.out.printf("Multithreaded performance on %d iterations with %d workers: %.0fms +- %.3fms std. dev\n",
+                numIterations, pool.getParallelism(), averageTime, standardDeviation);
+    }
+
+    private static long calculateChecksums(DirectoryChecksum directoryChecksum, ForkJoinPool pool) {
         long start = System.currentTimeMillis();
-        Set<Checksum> checksums = directoryChecksum.getChecksums();
-        long elapsed = System.currentTimeMillis() - start;
-        System.out.printf("Finished. Elapsed time: %d\n\n", elapsed);
-        checksums.forEach(e -> System.out.println(e.toString()));
+        Set<Checksum> checksums = directoryChecksum.getChecksums(DEFAULT_BUFFER_SIZE, pool);
+        return System.currentTimeMillis() - start;
     }
 
     private File file;
@@ -45,20 +70,20 @@ public class DirectoryChecksum {
     }
 
     public Set<Checksum> getChecksums() {
-        return getChecksums(DEFAULT_BUFFER_SIZE);
+        return getChecksums(DEFAULT_BUFFER_SIZE, ForkJoinPool.commonPool());
     }
 
-    public Set<Checksum> getChecksums(int bufferSize) {
+    public Set<Checksum> getChecksums(int bufferSize, ForkJoinPool forkJoinPool) {
         this.bufferSize = bufferSize;
         File[] files = file.listFiles();
         if(files != null) {
-            ForkJoinPool.commonPool().invoke(new RecursiveChecksumAction(file, Arrays.asList(files)));
+            forkJoinPool.invoke(new RecursiveChecksumAction(file, Arrays.asList(files)));
         }
         return new HashSet<>(checksums);
     }
 
     private class RecursiveChecksumAction extends RecursiveAction {
-        private static final long WORK_THRESHOLD_BYTES = 10_000_000; // 10 megabytes
+        private static final long WORK_THRESHOLD_BYTES = 1_000_000; // 1MB
         private static final int BRANCH_FACTOR = 2; // How many groups to create each time
 
         private File root;
@@ -79,13 +104,13 @@ public class DirectoryChecksum {
 
             if(numFiles > 0) {
                 if(numFiles == 1 || files.stream().mapToLong(File::length).sum() <= WORK_THRESHOLD_BYTES) {
-                    // One file left, or the files in this task sum to less than 10MB
+                    // One file left, or the files in this task sum to less than the threshold file size
                     work(files);
                 } else {
                     // Break into groups
                     for(int i = 0; i < BRANCH_FACTOR; i++) {
                         int start = i * numFiles/BRANCH_FACTOR;
-                        int end = start + numFiles/BRANCH_FACTOR;
+                        int end = i == BRANCH_FACTOR - 1 ? numFiles : start + numFiles/BRANCH_FACTOR;
                         subtasks.add(new RecursiveChecksumAction(root, files.subList(start, end)));
                     }
                 }
