@@ -17,6 +17,16 @@ import java.util.stream.Collectors;
 public class DirectoryChecksum {
     private static final int DEFAULT_BUFFER_SIZE = 1024;
 
+    public static void main(String[] args) {
+        DirectoryChecksum directoryChecksum = new DirectoryChecksum("test_resources", HashAlgorithm.MD5);
+        System.out.println("Starting...");
+        long start = System.currentTimeMillis();
+        Set<Checksum> checksums = directoryChecksum.getChecksums();
+        long elapsed = System.currentTimeMillis() - start;
+        System.out.printf("Finished. Elapsed time: %d\n\n", elapsed);
+        checksums.forEach(e -> System.out.println(e.toString()));
+    }
+
     private File file;
     private HashAlgorithm algorithm;
     private Set<Checksum> checksums;
@@ -67,16 +77,17 @@ public class DirectoryChecksum {
 
             List<RecursiveChecksumAction> subtasks = new ArrayList<>();
 
-            if(numFiles == 1 ||
-                    (numFiles != 0 && files.stream().mapToLong(File::length).sum() <= WORK_THRESHOLD_BYTES)) {
-                // One file left, or the files in this task sum to less than 10MB
-                work(files);
-            } else {
-                // Break into groups
-                for(int i = 0; i < BRANCH_FACTOR; i++) {
-                    int start = i * numFiles/BRANCH_FACTOR;
-                    int end = start + numFiles/BRANCH_FACTOR;
-                    subtasks.add(new RecursiveChecksumAction(root, files.subList(start, end)));
+            if(numFiles > 0) {
+                if(numFiles == 1 || files.stream().mapToLong(File::length).sum() <= WORK_THRESHOLD_BYTES) {
+                    // One file left, or the files in this task sum to less than 10MB
+                    work(files);
+                } else {
+                    // Break into groups
+                    for(int i = 0; i < BRANCH_FACTOR; i++) {
+                        int start = i * numFiles/BRANCH_FACTOR;
+                        int end = start + numFiles/BRANCH_FACTOR;
+                        subtasks.add(new RecursiveChecksumAction(root, files.subList(start, end)));
+                    }
                 }
             }
 

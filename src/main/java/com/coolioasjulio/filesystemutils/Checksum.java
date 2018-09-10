@@ -1,5 +1,7 @@
 package com.coolioasjulio.filesystemutils;
 
+import com.google.gson.Gson;
+
 import java.util.Objects;
 
 public class Checksum {
@@ -29,6 +31,11 @@ public class Checksum {
 
     public String getCheckSum() {
         return checkSum;
+    }
+
+    @Override
+    public String toString() {
+        return new Gson().toJson(this);
     }
 
     @Override
