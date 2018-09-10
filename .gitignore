@@ -1,4 +1,5 @@
 test_resources/*
+*.auth
 
 # Compiled class file
 *.class

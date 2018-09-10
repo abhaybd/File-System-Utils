@@ -1,13 +1,20 @@
 package com.coolioasjulio.filesystemutils;
 
+import com.coolioasjulio.filesystemutils.filewrappers.FSFile;
+import com.coolioasjulio.filesystemutils.filewrappers.IOFSFile;
+import com.coolioasjulio.filesystemutils.filewrappers.SmbFSFile;
+import jcifs.smb.NtlmPasswordAuthentication;
+
 import java.io.File;
-import java.nio.file.Path;
+import java.io.FileNotFoundException;
+import java.net.MalformedURLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Scanner;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ForkJoinPool;
@@ -19,12 +26,20 @@ public class DirectoryChecksum {
     private static final int DEFAULT_BUFFER_SIZE = 8192;
 
     public static void main(String[] args) {
-        int numIterations = 10;
-        DirectoryChecksum directoryChecksum = new DirectoryChecksum("test_resources", HashAlgorithm.MD5);
-        System.out.println("Starting...");
+        try(Scanner in = new Scanner(new File("login.auth"))) {
+            String user = in.nextLine();
+            NtlmPasswordAuthentication auth = new NtlmPasswordAuthentication(user);
+            String path = "smb://THEHUBNAS/The HubFiles/Documents/Collected User Files/Public/";
 
-        benchmarkSingleThreaded(directoryChecksum, numIterations);
-        benchmarkMultiThreaded(directoryChecksum, numIterations);
+            int numIterations = 2;
+            DirectoryChecksum directoryChecksum = new DirectoryChecksum(new SmbFSFile(path, auth), HashAlgorithm.MD5);
+            System.out.println("Starting...");
+
+            benchmarkSingleThreaded(directoryChecksum, numIterations);
+            benchmarkMultiThreaded(directoryChecksum, numIterations);
+        } catch (FileNotFoundException | MalformedURLException e) {
+            e.printStackTrace();
+        }
     }
 
     private static void benchmarkSingleThreaded(DirectoryChecksum directoryChecksum, int numIterations) {
@@ -52,16 +67,16 @@ public class DirectoryChecksum {
         return System.currentTimeMillis() - start;
     }
 
-    private File file;
+    private FSFile file;
     private HashAlgorithm algorithm;
     private Set<Checksum> checksums;
     private int bufferSize;
 
     public DirectoryChecksum(String path, HashAlgorithm algorithm) {
-        this(new File(path), algorithm);
+        this(new IOFSFile(path), algorithm);
     }
 
-    public DirectoryChecksum(File file, HashAlgorithm algorithm) {
+    public DirectoryChecksum(FSFile file, HashAlgorithm algorithm) {
         if(!file.isDirectory()) throw new IllegalArgumentException(file.getPath() + " is not a valid directory!");
 
         this.file = file;
@@ -75,7 +90,7 @@ public class DirectoryChecksum {
 
     public Set<Checksum> getChecksums(int bufferSize, ForkJoinPool forkJoinPool) {
         this.bufferSize = bufferSize;
-        File[] files = file.listFiles();
+        FSFile[] files = file.listFiles();
         if(files != null) {
             forkJoinPool.invoke(new RecursiveChecksumAction(file, Arrays.asList(files)));
         }
@@ -83,27 +98,27 @@ public class DirectoryChecksum {
     }
 
     private class RecursiveChecksumAction extends RecursiveAction {
-        private static final long WORK_THRESHOLD_BYTES = 1_000_000; // 1MB
+        private static final long WORK_THRESHOLD = 1; // 1MB
         private static final int BRANCH_FACTOR = 2; // How many groups to create each time
 
-        private File root;
-        private List<File> workLoad;
+        private FSFile root;
+        private List<FSFile> workLoad;
 
-        private RecursiveChecksumAction(File root, List<File> workLoad) {
+        private RecursiveChecksumAction(FSFile root, List<FSFile> workLoad) {
             this.root = root;
             this.workLoad = workLoad;
         }
 
         @Override
         protected void compute() {
-            List<File> directories = workLoad.stream().filter(File::isDirectory).collect(Collectors.toList());
-            List<File> files = workLoad.stream().filter(File::isFile).collect(Collectors.toList());
+            List<FSFile> directories = workLoad.stream().filter(FSFile::isDirectory).collect(Collectors.toList());
+            List<FSFile> files = workLoad.stream().filter(FSFile::isFile).collect(Collectors.toList());
             int numFiles = files.size();
 
             List<RecursiveChecksumAction> subtasks = new ArrayList<>();
 
             if(numFiles > 0) {
-                if(numFiles == 1 || files.stream().mapToLong(File::length).sum() <= WORK_THRESHOLD_BYTES) {
+                if(numFiles <= WORK_THRESHOLD) {
                     // One file left, or the files in this task sum to less than the threshold file size
                     work(files);
                 } else {
@@ -116,8 +131,8 @@ public class DirectoryChecksum {
                 }
             }
 
-            for(File dir : directories) {
-                File[] subFiles = dir.listFiles();
+            for(FSFile dir : directories) {
+                FSFile[] subFiles = dir.listFiles();
                 if(subFiles != null) {
                     subtasks.add(new RecursiveChecksumAction(root, new ArrayList<>(Arrays.asList(subFiles))));
                 }
@@ -126,13 +141,13 @@ public class DirectoryChecksum {
             invokeAll(subtasks);
         }
 
-        private void work(List<File> files) {
+        private void work(List<FSFile> files) {
             List<Checksum> checksums = new LinkedList<>();
-            for(File f : files) {
-                Path relativePath = root.toPath().relativize(f.toPath());
+            for(FSFile f : files) {
+                String path = f.getPath().replace(root.getPath(), "").replaceAll("^/+","");
                 long fileSize = f.length();
                 byte[] fileChecksum = new FileChecksum(f, algorithm).getChecksum(bufferSize);
-                Checksum checksum = new Checksum(relativePath.toString(), fileSize, fileChecksum);
+                Checksum checksum = new Checksum(path, fileSize, fileChecksum);
                 checksums.add(checksum);
             }
             DirectoryChecksum.this.checksums.addAll(checksums);

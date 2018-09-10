@@ -1,22 +1,24 @@
 package com.coolioasjulio.filesystemutils;
 
-import java.io.File;
-import java.io.FileInputStream;
+import com.coolioasjulio.filesystemutils.filewrappers.FSFile;
+import com.coolioasjulio.filesystemutils.filewrappers.IOFSFile;
+
 import java.io.IOException;
+import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
 public class FileChecksum {
-    private static final int DEFAULT_BUFFER_SIZE = 1024;
+    private static final int DEFAULT_BUFFER_SIZE = 8192;
 
-    private File file;
+    private FSFile file;
     private MessageDigest digest;
 
     public FileChecksum(String path, HashAlgorithm algorithm) {
-        this(new File(path), algorithm);
+        this(new IOFSFile(path), algorithm);
     }
 
-    public FileChecksum(File file, HashAlgorithm algorithm) {
+    public FileChecksum(FSFile file, HashAlgorithm algorithm) {
         this.file = file;
 
         try {
@@ -43,7 +45,7 @@ public class FileChecksum {
         int bytesRead;
 
         try {
-            FileInputStream in = new FileInputStream(file);
+            InputStream in = file.getInputStream();
 
             while((bytesRead = in.read(arr)) != -1) {
                 digest.update(arr, 0, bytesRead);
