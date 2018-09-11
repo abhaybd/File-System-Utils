@@ -3,24 +3,25 @@ package com.coolioasjulio.filesystemutils;
 import com.coolioasjulio.filesystemutils.filewrappers.FSFile;
 import com.coolioasjulio.filesystemutils.filewrappers.IOFSFile;
 import com.coolioasjulio.filesystemutils.filewrappers.SmbFSFile;
+import com.google.gson.Gson;
 import jcifs.smb.NtlmPasswordAuthentication;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.PrintStream;
 import java.net.MalformedURLException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Scanner;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RecursiveAction;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 public class DirectoryChecksum {
     private static final int DEFAULT_BUFFER_SIZE = 8192;
@@ -31,45 +32,21 @@ public class DirectoryChecksum {
             NtlmPasswordAuthentication auth = new NtlmPasswordAuthentication(user);
             String path = "smb://THEHUBNAS/The HubFiles/Documents/Collected User Files/Public/";
 
-            int numIterations = 2;
             DirectoryChecksum directoryChecksum = new DirectoryChecksum(new SmbFSFile(path, auth), HashAlgorithm.MD5);
             System.out.println("Starting...");
 
-            benchmarkSingleThreaded(directoryChecksum, numIterations);
-            benchmarkMultiThreaded(directoryChecksum, numIterations);
+            long start = System.currentTimeMillis();
+            directoryChecksum.writeChecksums("checksums.txt");
+            long elapsedTime = System.currentTimeMillis() - start;
+            System.out.printf("Finished after %d milliseconds!\n", elapsedTime);
         } catch (FileNotFoundException | MalformedURLException e) {
             e.printStackTrace();
         }
     }
 
-    private static void benchmarkSingleThreaded(DirectoryChecksum directoryChecksum, int numIterations) {
-        double[] times = IntStream.range(0,numIterations)
-                .mapToDouble(e -> calculateChecksums(directoryChecksum, new ForkJoinPool(1))).toArray();
-        double averageTime = Arrays.stream(times).average().orElse(0.0);
-        double standardDeviation = Math.sqrt(Arrays.stream(times).map(e -> Math.pow(averageTime-e,2)).average().orElse(0.0));
-        System.out.printf("Single threaded performance on %d iterations: %.0fms +- %.3fms std. dev\n",
-                numIterations, averageTime, standardDeviation);
-    }
-
-    private static void benchmarkMultiThreaded(DirectoryChecksum directoryChecksum, int numIterations) {
-        ForkJoinPool pool = ForkJoinPool.commonPool();
-        double[] times = IntStream.range(0,numIterations)
-                .mapToDouble(e -> calculateChecksums(directoryChecksum, pool)).toArray();
-        double averageTime = Arrays.stream(times).average().orElse(0.0);
-        double standardDeviation = Math.sqrt(Arrays.stream(times).map(e -> Math.pow(averageTime-e,2)).average().orElse(0.0));
-        System.out.printf("Multithreaded performance on %d iterations with %d workers: %.0fms +- %.3fms std. dev\n",
-                numIterations, pool.getParallelism(), averageTime, standardDeviation);
-    }
-
-    private static long calculateChecksums(DirectoryChecksum directoryChecksum, ForkJoinPool pool) {
-        long start = System.currentTimeMillis();
-        Set<Checksum> checksums = directoryChecksum.getChecksums(DEFAULT_BUFFER_SIZE, pool);
-        return System.currentTimeMillis() - start;
-    }
-
     private FSFile file;
     private HashAlgorithm algorithm;
-    private Set<Checksum> checksums;
+    private LinkedBlockingQueue<Checksum> computedChecksums;
     private int bufferSize;
 
     public DirectoryChecksum(String path, HashAlgorithm algorithm) {
@@ -81,24 +58,62 @@ public class DirectoryChecksum {
 
         this.file = file;
         this.algorithm = algorithm;
-        checksums = Collections.newSetFromMap(new ConcurrentHashMap<>());
+        computedChecksums = new LinkedBlockingQueue<>();
     }
 
     public Set<Checksum> getChecksums() {
-        return getChecksums(DEFAULT_BUFFER_SIZE, ForkJoinPool.commonPool());
+        return getChecksums(DEFAULT_BUFFER_SIZE);
     }
 
-    public Set<Checksum> getChecksums(int bufferSize, ForkJoinPool forkJoinPool) {
+    public Set<Checksum> getChecksums(int bufferSize) {
         this.bufferSize = bufferSize;
+        computedChecksums.clear();
+
         FSFile[] files = file.listFiles();
         if(files != null) {
-            forkJoinPool.invoke(new RecursiveChecksumAction(file, Arrays.asList(files)));
+            ForkJoinPool.commonPool().invoke(new RecursiveChecksumAction(file, Arrays.asList(files)));
         }
-        return new HashSet<>(checksums);
+
+        HashSet<Checksum> checksums = new HashSet<>();
+        computedChecksums.drainTo(checksums);
+        return checksums;
+    }
+
+    public void writeChecksums(String path) {
+        writeChecksums(path, DEFAULT_BUFFER_SIZE);
+    }
+
+    public void writeChecksums(String path, int bufferSize) {
+        this.bufferSize = bufferSize;
+        computedChecksums.clear();
+
+        FSFile[] files = file.listFiles();
+        RecursiveAction action;
+        if(files != null) {
+            action = new RecursiveChecksumAction(file, Arrays.asList(files));
+            ForkJoinPool.commonPool().submit(action);
+        } else {
+            throw new IllegalStateException("Invalid file!");
+        }
+
+        try (PrintStream out = new PrintStream(new FileOutputStream(path))){
+            Gson gson = new Gson();
+            while(!action.isDone()) {
+                Checksum checksum = computedChecksums.poll(100, TimeUnit.MILLISECONDS);
+                if(checksum != null) {
+                    out.println(gson.toJson(checksum));
+                }
+            }
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+            throw new RuntimeException(e);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
     }
 
     private class RecursiveChecksumAction extends RecursiveAction {
-        private static final long WORK_THRESHOLD = 1; // 1MB
+        private static final long WORK_THRESHOLD = 1; // 1 file
         private static final int BRANCH_FACTOR = 2; // How many groups to create each time
 
         private FSFile root;
@@ -142,15 +157,17 @@ public class DirectoryChecksum {
         }
 
         private void work(List<FSFile> files) {
-            List<Checksum> checksums = new LinkedList<>();
-            for(FSFile f : files) {
-                String path = f.getPath().replace(root.getPath(), "").replaceAll("^/+","");
-                long fileSize = f.length();
-                byte[] fileChecksum = new FileChecksum(f, algorithm).getChecksum(bufferSize);
-                Checksum checksum = new Checksum(path, fileSize, fileChecksum);
-                checksums.add(checksum);
+            try {
+                for(FSFile f : files) {
+                    String path = f.getPath().replace(root.getPath(), "").replaceAll("^[\\\\/]+","");
+                    long fileSize = f.length();
+                    byte[] fileChecksum = new FileChecksum(f, algorithm).getChecksum(bufferSize);
+                    Checksum checksum = new Checksum(path, fileSize, fileChecksum);
+                    computedChecksums.put(checksum);
+                }
+            } catch (InterruptedException e) {
+                e.printStackTrace();
             }
-            DirectoryChecksum.this.checksums.addAll(checksums);
         }
     }
 }
