@@ -14,8 +14,7 @@ public class Checksum {
         this.fileSize = fileSize;
 
         StringBuilder sb = new StringBuilder();
-        for(byte b : checkSum)
-        {
+        for (byte b : checkSum) {
             sb.append(Integer.toString((b & 0xff) + 0x100, 16).substring(1));
         }
         this.checkSum = sb.toString();
@@ -40,7 +39,7 @@ public class Checksum {
 
     @Override
     public boolean equals(Object o) {
-        if(!(o instanceof Checksum)) return false;
+        if (!(o instanceof Checksum)) return false;
         Checksum c = ((Checksum) o);
         return fileSize == c.fileSize && checkSum.equals(c.checkSum) && relativePath.equals(c.relativePath);
     }

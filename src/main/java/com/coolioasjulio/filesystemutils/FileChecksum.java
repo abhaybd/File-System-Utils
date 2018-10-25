@@ -35,7 +35,7 @@ public class FileChecksum {
     }
 
     public byte[] getChecksum(int bufferSize) {
-        if(!file.isFile()) {
+        if (!file.isFile()) {
             throw new IllegalStateException("Invalid file: " + file.getPath());
         }
 
@@ -47,12 +47,12 @@ public class FileChecksum {
         try {
             InputStream in = file.getInputStream();
 
-            while((bytesRead = in.read(arr)) != -1) {
+            while ((bytesRead = in.read(arr)) != -1) {
                 digest.update(arr, 0, bytesRead);
             }
 
             return digest.digest();
-        } catch(IOException e) {
+        } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }

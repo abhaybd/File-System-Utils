@@ -40,7 +40,7 @@ public class IOFSFile implements FSFile {
     @Override
     public FSFile[] listFiles() {
         File[] files = file.listFiles();
-        if(files != null) {
+        if (files != null) {
             return Arrays.stream(files).map(IOFSFile::new).toArray(IOFSFile[]::new);
         }
         return null;

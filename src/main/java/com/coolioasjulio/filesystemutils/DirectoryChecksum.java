@@ -27,14 +27,14 @@ public class DirectoryChecksum {
     private static final int DEFAULT_BUFFER_SIZE = 8192;
 
     public static void main(String[] args) {
-        try(Scanner in = new Scanner(new File("login.auth"))) {
+        try (Scanner in = new Scanner(new File("login.auth"))) {
             String user = in.nextLine();
             NtlmPasswordAuthentication auth = new NtlmPasswordAuthentication(user);
-            String path = "smb://THEHUBNAS/The HubFiles/Documents/Collected User Files/Public/";
+            String path = "smb://THEHUBNAS/The HubFiles/";
 
             DirectoryChecksum directoryChecksum = new DirectoryChecksum(new SmbFSFile(path, auth), HashAlgorithm.MD5);
-            System.out.println("Starting...");
 
+            System.out.println("Starting...");
             long start = System.currentTimeMillis();
             directoryChecksum.writeChecksums("checksums.txt");
             long elapsedTime = System.currentTimeMillis() - start;
@@ -54,7 +54,7 @@ public class DirectoryChecksum {
     }
 
     public DirectoryChecksum(FSFile file, HashAlgorithm algorithm) {
-        if(!file.isDirectory()) throw new IllegalArgumentException(file.getPath() + " is not a valid directory!");
+        if (!file.isDirectory()) throw new IllegalArgumentException(file.getPath() + " is not a valid directory!");
 
         this.file = file;
         this.algorithm = algorithm;
@@ -70,7 +70,7 @@ public class DirectoryChecksum {
         computedChecksums.clear();
 
         FSFile[] files = file.listFiles();
-        if(files != null) {
+        if (files != null) {
             ForkJoinPool.commonPool().invoke(new RecursiveChecksumAction(file, Arrays.asList(files)));
         }
 
@@ -89,18 +89,18 @@ public class DirectoryChecksum {
 
         FSFile[] files = file.listFiles();
         RecursiveAction action;
-        if(files != null) {
+        if (files != null) {
             action = new RecursiveChecksumAction(file, Arrays.asList(files));
             ForkJoinPool.commonPool().submit(action);
         } else {
             throw new IllegalStateException("Invalid file!");
         }
 
-        try (PrintStream out = new PrintStream(new FileOutputStream(path))){
+        try (PrintStream out = new PrintStream(new FileOutputStream(path))) {
             Gson gson = new Gson();
-            while(!action.isDone()) {
+            while (!action.isDone()) {
                 Checksum checksum = computedChecksums.poll(100, TimeUnit.MILLISECONDS);
-                if(checksum != null) {
+                if (checksum != null) {
                     out.println(gson.toJson(checksum));
                 }
             }
@@ -132,23 +132,23 @@ public class DirectoryChecksum {
 
             List<RecursiveChecksumAction> subtasks = new ArrayList<>();
 
-            if(numFiles > 0) {
-                if(numFiles <= WORK_THRESHOLD) {
+            if (numFiles > 0) {
+                if (numFiles <= WORK_THRESHOLD) {
                     // One file left, or the files in this task sum to less than the threshold file size
                     work(files);
                 } else {
                     // Break into groups
-                    for(int i = 0; i < BRANCH_FACTOR; i++) {
-                        int start = i * numFiles/BRANCH_FACTOR;
-                        int end = i == BRANCH_FACTOR - 1 ? numFiles : start + numFiles/BRANCH_FACTOR;
+                    for (int i = 0; i < BRANCH_FACTOR; i++) {
+                        int start = i * numFiles / BRANCH_FACTOR;
+                        int end = i == BRANCH_FACTOR - 1 ? numFiles : start + numFiles / BRANCH_FACTOR;
                         subtasks.add(new RecursiveChecksumAction(root, files.subList(start, end)));
                     }
                 }
             }
 
-            for(FSFile dir : directories) {
+            for (FSFile dir : directories) {
                 FSFile[] subFiles = dir.listFiles();
-                if(subFiles != null) {
+                if (subFiles != null) {
                     subtasks.add(new RecursiveChecksumAction(root, new ArrayList<>(Arrays.asList(subFiles))));
                 }
             }
@@ -158,8 +158,8 @@ public class DirectoryChecksum {
 
         private void work(List<FSFile> files) {
             try {
-                for(FSFile f : files) {
-                    String path = f.getPath().replace(root.getPath(), "").replaceAll("^[\\\\/]+","");
+                for (FSFile f : files) {
+                    String path = f.getPath().replace(root.getPath(), "").replaceAll("^[\\\\/]+", "");
                     long fileSize = f.length();
                     byte[] fileChecksum = new FileChecksum(f, algorithm).getChecksum(bufferSize);
                     Checksum checksum = new Checksum(path, fileSize, fileChecksum);

@@ -13,7 +13,7 @@ import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.util.Arrays;
 
-public class SmbFSFile implements FSFile{
+public class SmbFSFile implements FSFile {
     private SmbFile file;
 
     public SmbFSFile(String url, NtlmPasswordAuthentication auth) throws MalformedURLException {
