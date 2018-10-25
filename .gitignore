@@ -1,5 +1,6 @@
 test_resources/*
 *.auth
+checksums.txt
 
 # Compiled class file
 *.class
