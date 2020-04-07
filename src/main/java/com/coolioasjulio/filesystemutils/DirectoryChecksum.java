@@ -30,7 +30,7 @@ public class DirectoryChecksum {
         try (Scanner in = new Scanner(new File("login.auth"))) {
             String user = in.nextLine();
             NtlmPasswordAuthentication auth = new NtlmPasswordAuthentication(user);
-            String path = "smb://THEHUBNAS/The HubFiles/";
+            String path = "smb://THEHUBNAS/The HubFiles/Media Files/Photos.Master/";
 
             DirectoryChecksum directoryChecksum = new DirectoryChecksum(new SmbFSFile(path, auth), HashAlgorithm.MD5);
 
@@ -113,7 +113,7 @@ public class DirectoryChecksum {
     }
 
     private class RecursiveChecksumAction extends RecursiveAction {
-        private static final long WORK_THRESHOLD = 1; // 1 file
+        private static final long WORK_THRESHOLD = 5; // 5 files
         private static final int BRANCH_FACTOR = 2; // How many groups to create each time
 
         private FSFile root;
@@ -134,7 +134,7 @@ public class DirectoryChecksum {
 
             if (numFiles > 0) {
                 if (numFiles <= WORK_THRESHOLD) {
-                    // One file left, or the files in this task sum to less than the threshold file size
+                    // Number of files is less than the work threshold
                     work(files);
                 } else {
                     // Break into groups
